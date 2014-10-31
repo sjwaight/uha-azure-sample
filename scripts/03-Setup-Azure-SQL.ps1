@@ -1,78 +1,72 @@
-﻿# Requires that you have SQL Server 2012 installed
-Import-Module sqlps
+﻿#Import-Module Azure
 
-# Helper Methods from: https://github.com/guangyang/azure-powershell-samples/blob/master/create-azure-sql.ps1
+# Helper Method from: https://github.com/guangyang/azure-powershell-samples/blob/master/create-azure-sql.ps1
 
-# Get the IP Range needed to be whitelisted for SQL Azure
-Function Detect-IPAddress
-{
-    $ipregex = "(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
-    $text = Invoke-RestMethod 'http://www.whatismyip.com/api/wimi.php'
-    $result = $null
-
-    If($text -match $ipregex)
-    {
-        $ipaddress = $matches[0]
-        $ipparts = $ipaddress.Split('.')
-        $ipparts[3] = 0
-        $startip = [string]::Join('.',$ipparts)
-        $ipparts[3] = 255
-        $endip = [string]::Join('.',$ipparts)
-
-        $result = @{StartIPAddress = $startip; EndIPAddress = $endip}
-    }
-
-    Return $result
-}
-
-
-# Generate connection string of a given SQL Azure database
-Function Get-SQLAzureDatabaseConnectionString
+# Create a PSCrendential object from plain text password.
+# The PS Credential object will be used to create a database context, which will be used to create database.
+Function New-PSCredentialFromPlainText
 {
     Param(
-        [String]$DatabaseServerName,
-        [String]$DatabaseName,
         [String]$UserName,
         [String]$Password
     )
 
-    Return "Server=tcp:{0}.database.windows.net,1433;Database={1};User ID={2}@{0};Password={3};Trusted_Connection=False;Encrypt=True;Connection Timeout=30;" -f
-        $DatabaseServerName, $DatabaseName, $UserName, $Password
-}
+    $securePassword = ConvertTo-SecureString -String $Password -AsPlainText -Force
 
-# End Helpers
+    Return New-Object System.Management.Automation.PSCredential($UserName, $securePassword)
+}
+# End imported helpers
 
 Function New-AzureSqlDatabaseWithFirewall
 {
     Param(
-        [String]$AzureLocation,
+        [String]$RegionName,
         [String]$UserName,
         [String]$Password,
         [String]$StartIPAddress,
-        [String]$EndIPAddress
+        [String]$EndIPAddress,
+        [Boolean]$IsPrimary
     )
 
-    $serverContext = New-AzureSqlDatabaseServer -Location $AzureLocation -AdministratorLogin $UserName -AdministratorLoginPassword $Password
+    # Create Server
+    $serverContext = New-AzureSqlDatabaseServer -Location $RegionName -AdministratorLogin $UserName -AdministratorLoginPassword $Password -Verbose
 
-    New-AzureSqlDatabaseServerFirewallRule -ServerName $serverContext.ServerName -RuleName "ScriptClientMachine" -StartIpAddress $StartIPAddress -EndIpAddress $EndIPAddress -Verbose
-    New-AzureSqlDatabaseServerFirewallRule -ServerName $serverContext.ServerName -RuleName "AllowAllAzureIP" -StartIpAddress "0.0.0.0" -EndIpAddress "0.0.0.0" -Verbose
+    # Setup Firewall Rules
+    New-AzureSqlDatabaseServerFirewallRule -ServerName $serverContext.ServerName -RuleName "ScriptClientMachine" -StartIpAddress $StartIPAddress -EndIpAddress $EndIPAddress -Verbose | Out-Null 
+    New-AzureSqlDatabaseServerFirewallRule -ServerName $serverContext.ServerName -RuleName "AllowAllAzureIP" -StartIpAddress "0.0.0.0" -EndIpAddress "0.0.0.0" -Verbose | Out-Null 
 
-    return $serverContext
+    return $serverContext.ServerName
 }
 
-$ipRange = Detect-IPAddress
-$startIPAddress = $ipRange.StartIPAddress
-$endIPAddress = $ipRange.EndIPAddress
+# ----------------------
+
+# use a public IP lookup site to find out what your public IP address is
+# this is required to setup firewall rules for Azure SQL Database
+$myPublicIpAddress = "1.1.1.1"
+
+If($myPublicIpAddress -eq "1.1.1.1")
+{
+    Write-Host
+    Write-Host "ERROR: you must set your public IP address first in the script."
+    Exit 1
+}
 
 $username = "demoadmin"
 $password = "d3MO5Pec$!"
-$databasName = "MvcMusicStore"
+$databaseNames = @("MvcMusicStore", "aspnetdb")
 
-$primaryServerContext = New-AzureSqlDatabaseWithFirewall -AzureLocation "Australia East" -UserNamer $username -Password $password -StartIPAddress $startIPAddress -EndIPAddress $endIPAddress
-#$secondaryServerContext = New-AzureSqlDatabaseWithFirewall -AzureLocation "Australia Southeast" -UserNamer $username -Password $password -StartIPAddress $startIPAddress -EndIPAddress $endIPAddress
+# Set Server Instance in different Regions
+$primaryServerName = New-AzureSqlDatabaseWithFirewall -RegionName "Australia East" -UserName $username -Password $password -StartIPAddress $myPublicIpAddress -EndIPAddress $myPublicIpAddress
+$secondaryServerName = New-AzureSqlDatabaseWithFirewall -RegionName "Australia Southeast" -UserName $username -Password $password -StartIPAddress $myPublicIpAddress -EndIPAddress $myPublicIpAddress
 
-$priumaryDbContext = New-AzureSqlDatabase -ConnectionContext $primaryContext -DatabaseName $databasName -MaxSizeGB 1 -Collation "SQL_Latin1_General_CP1_CI_AS" -Edition Basic
+# Provision each database and setup active read-only geo-replica
+foreach ($db in $databaseNames) {
+   
+    # Create new empty database on Primary Server
+    $credentials = New-PSCredentialFromPlainText -UserName $UserName -Password $Password   
+    $serverIContext = New-AzureSqlDatabaseServerContext -ServerName $primaryServerName -Credential $credentials
+    $priumaryDbContext = New-AzureSqlDatabase -ConnectionContext $serverIContext -DatabaseName $db -MaxSizeGB 1 -Collation "SQL_Latin1_General_CP1_CI_AS" -Edition Premium -Verbose
 
-$sqlCmdConnection = "{0}@{1}.database.windows.net" -f $username, $primaryServerContext.ServerName
-
-Invoke-Sqlcmd -InputFile "..\web-app-tier\MvcMusicStore-Create.sql" -ServerInstance $sqlCmdConnection
+    # Starts the active geo-replication from primary server to secondary read-only replica
+    Start-AzureSqlDatabaseCopy -ServerName $primaryServerName -DatabaseName $db -PartnerServer $secondaryServerName -ContinuousCopy
+ }
