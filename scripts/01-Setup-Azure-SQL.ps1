@@ -1,6 +1,4 @@
-﻿#Import-Module Azure
-
-# Helper Method from: https://github.com/guangyang/azure-powershell-samples/blob/master/create-azure-sql.ps1
+﻿# Helper Method from: https://github.com/guangyang/azure-powershell-samples/blob/master/create-azure-sql.ps1
 
 # Create a PSCrendential object from plain text password.
 # The PS Credential object will be used to create a database context, which will be used to create database.
@@ -38,7 +36,7 @@ Function New-AzureSqlDatabaseWithFirewall
     return $serverContext.ServerName
 }
 
-# ----------------------
+#-----------------------------------------------------
 
 # use a public IP lookup site to find out what your public IP address is
 # this is required to setup firewall rules for Azure SQL Database
@@ -69,4 +67,4 @@ foreach ($db in $databaseNames) {
 
     # Starts the active geo-replication from primary server to secondary read-only replica
     Start-AzureSqlDatabaseCopy -ServerName $primaryServerName -DatabaseName $db -PartnerServer $secondaryServerName -ContinuousCopy
- }
+}
