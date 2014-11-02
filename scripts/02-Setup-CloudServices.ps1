@@ -1,21 +1,25 @@
-﻿Function New-DeploymentRegion($regionName)
+﻿Function New-DeploymentRegion
 {
+Param(
+        [String]$RegionName
+    )
+
     ####
     # Affinity Group
     ####
 
-    $affinityGroupName = "MsW{0}" -f $regionName.Replace(" ", "")
+    $affinityGroupName = "MsW{0}" -f $RegionName.Replace(" ", "")
 
     $existingGroup = Get-AzureAffinityGroup -Name $affinityGroupName -ErrorAction SilentlyContinue
 
     if($existingGroup -eq $null)
     {
-        $affinityLabel = "Music Store Web {0}" -f $regionName
-        $affinityDescription = "Affinity group for Music Store in {0} Region." -f $regionName
+        $affinityLabel = "Music Store Web {0}" -f $RegionName
+        $affinityDescription = "Affinity group for Music Store in {0} Region." -f $RegionName
 
         Write-Host "Creating Affinity Group: $affinityGroupName"
 
-        New-AzureAffinityGroup -Name $affinityGroupName -Location $regionName -Label $affinityLabel -Description $affinityDescription
+        New-AzureAffinityGroup -Name $affinityGroupName -Location $RegionName -Label $affinityLabel -Description $affinityDescription
     }
     else
     {
@@ -29,7 +33,7 @@
     $storageAccountName = "md{0}" -f $affinityGroupName.ToLower()
     $accountContainer = "deployments"
     
-    $exitstingStorage = Get-AzureStorageAccount -StorageAccountName $storageAccountName -ErrorAction SilentlyContinue
+    $existingStorage = Get-AzureStorageAccount -StorageAccountName $storageAccountName -ErrorAction SilentlyContinue
 
     if($existingStorage -eq $null)
     {
@@ -63,7 +67,7 @@
     # Setup Cloud Service
     ####
 
-    $cloudServiceName = "MusicStoreWeb{0}"-f $affinityGroupName
+    $cloudServiceName = "dm{0}"-f $affinityGroupName
 
     $existingService = Get-AzureService -ServiceName $cloudServiceName -ErrorAction SilentlyContinue
 
@@ -79,5 +83,5 @@
 
 #-----------------------------------------------------
 
-New-DeploymentRegion("West US")
-#New-DeploymentRegion("Australia Southeast")
+New-DeploymentRegion -RegionName "Australia East"
+New-DeploymentRegion -RegionName "Australia Southeast"
